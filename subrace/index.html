@@ -44,11 +44,6 @@ canvas{display:block}
 .slot span{color:var(--muted);font-weight:700;font-size:14px}
 .slot.on{border-style:solid;border-color:var(--c);background:color-mix(in srgb,var(--c) 12%,transparent);box-shadow:0 0 30px color-mix(in srgb,var(--c) 30%,transparent)}
 .slot.on b{color:var(--c)}
-.modes{display:flex;flex-wrap:wrap;justify-content:center;gap:8px;margin:6px 0 4px}
-.modes[hidden]{display:none}
-.modes button{border:2px solid var(--line);background:rgba(255,255,255,.05);color:#fff;border-radius:999px;padding:9px 16px;font:800 15px Figtree,system-ui,sans-serif;cursor:pointer}
-.modes button.on{border-color:var(--aqua);background:rgba(95,227,255,.16);box-shadow:0 0 18px rgba(95,227,255,.35)}
-.modes small{display:block;width:100%;color:var(--muted);font-weight:700;font-size:13px}
 .ctrls{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:8px;margin-top:16px;text-align:left}
 .ctrls div{padding:9px 12px;border-radius:12px;background:rgba(255,255,255,.05);border:1px solid var(--line);font-size:13.5px;color:var(--muted);font-weight:700}
 .ctrls b{color:#fff}
@@ -78,14 +73,10 @@ canvas{display:block}
 <div class="ovl" id="lobby">
   <div class="card">
     <div class="logo">SUBRACE</div>
-    <p class="sub">Two underwater robots, one pool. Dive through the gate, touch the right buoy, fire a torpedo through the board, drop a marker in the bin, then follow the pinger and <b style="color:#fff">surface in the octagon first</b> to win.</p>
+    <p class="sub">Dive through the gate, touch the right buoy, fire a torpedo through the board, drop a marker in the bin, then follow the pinger and <b style="color:#fff">surface in the octagon</b>. Play solo against the clock, or plug in a second controller and race a friend.</p>
     <div class="slots">
       <div class="slot" id="slot0" style="--c:var(--p1)"><b>P1</b><span>Press ✕ on a controller to join</span></div>
-      <div class="slot" id="slot1" style="--c:var(--p2)"><b>P2</b><span>Press ✕ on a second controller · or race the computer</span></div>
-    </div>
-    <div class="modes" id="modes" hidden>
-      <button data-m="trial">🏁 Solo time trial</button><button data-m="easy">🤖 vs Computer · Easy</button><button data-m="normal">🤖 Normal</button><button data-m="hard">🤖 Hard</button>
-      <small id="modeHint">△ on the controller (or M on the keyboard) switches mode · a second controller can still join with ✕</small>
+      <div class="slot" id="slot1" style="--c:var(--p2)"><b>P2</b><span>Optional · second controller presses ✕ to join</span></div>
     </div>
     <div class="ctrls">
       <div>🕹️ <b>Left stick</b> forward · turn</div>
@@ -96,7 +87,7 @@ canvas{display:block}
       <div>☰ <b>Options</b> start / pause</div>
     </div>
     <button class="btn" id="startBtn" disabled>Start race ▶</button>
-    <div class="note" id="lobbyNote">No controller? Press <b>Enter</b> to drive P1 with the keyboard (WASD, R/F up/down, Q/E slide, Space, C, V).</div>
+    <div class="note" id="lobbyNote"><b>✕ to join, ✕ again to start.</b> No controller? Press <b>Enter</b> twice to play with the keyboard (WASD, R/F up/down, Q/E slide, Space, C, V).</div>
   </div>
 </div>
 
@@ -429,22 +420,16 @@ function botInput(s, skill){
 
 /* ============================== GAME STATE ============================== */
 let state = 'lobby', countT = 0, raceT = 0, winner = null, pinger = 0;
-const MODES = ['trial', 'easy', 'normal', 'hard'], SKILL = {easy: .55, normal: .78, hard: .97};
-let MODE = 'normal'; try{ if(MODES.includes(localStorage.getItem('subrace_mode'))) MODE = localStorage.getItem('subrace_mode'); }catch(_){}
 const active = s => !!slots[s.i];
 const humanCount = () => slots.filter(x => x && x.kind !== 'bot').length;
-function setMode(m){ MODE = m; try{ localStorage.setItem('subrace_mode', m); }catch(_){} syncLobby(); }
-function cycleMode(){ setMode(MODES[(MODES.indexOf(MODE) + 1) % MODES.length]); }
 function getBest(){ try{ return +localStorage.getItem('subrace_best') || 0; }catch(_){ return 0; } }
 function setBest(t){ try{ localStorage.setItem('subrace_best', String(t)); }catch(_){} }
 function setOverlay(id){ ['lobby', 'count', 'pause', 'finish'].forEach(k => $('#' + k).hidden = k !== id); hud.style.display = id === 'lobby' ? 'none' : ''; }
 function syncLobby(){
   [0, 1].forEach(i => { const sl = slots[i], el = $('#slot' + i); el.classList.toggle('on', !!sl && sl.kind !== 'bot'); el.querySelector('span').textContent = sl ? (sl.kind === 'pad' ? '🎮 Controller ready ✓' : '⌨️ Keyboard ready ✓') : i === 0 ? 'Press ✕ on a controller to join' : (slots[0] ? 'Press ✕ on a second controller · or race the computer' : 'Waiting for P1'); });
   const n = humanCount();
-  $('#modes').hidden = n !== 1;
-  document.querySelectorAll('#modes button').forEach(b => b.classList.toggle('on', b.dataset.m === MODE));
-  if(n === 1 && !slots[1]) $('#slot1').querySelector('span').textContent = MODE === 'trial' ? 'Solo time trial · no opponent' + (getBest() ? ' · best ' + fmt(getBest()) : '') : 'Computer (' + MODE + ') · or press ✕ on a second controller';
-  $('#startBtn').disabled = n === 0; $('#startBtn').textContent = n === 2 ? 'Start race ▶ (☰)' : n === 1 ? (MODE === 'trial' ? 'Start time trial ▶ (☰)' : 'Race the computer ▶ (☰)') : 'Start race ▶';
+  if(n === 1 && !slots[1]) $('#slot1').querySelector('span').textContent = 'Playing solo' + (getBest() ? ' · your best ' + fmt(getBest()) : '') + ' · a second controller can still press ✕ to join';
+  $('#startBtn').disabled = n === 0; $('#startBtn').textContent = n === 2 ? 'Start race ▶ (✕)' : n === 1 ? 'Play solo ▶ (✕)' : 'Press ✕ to join';
 }
 function join(kind, gp){
   const i = slots[0] ? (slots[1] ? -1 : 1) : 0; if(i < 0) return;
@@ -455,13 +440,13 @@ function join(kind, gp){
 function startRace(){
   if(state === 'race' || state === 'count') return;
   if(!slots[0]) return;
-  if(!slots[1] && (MODE !== 'trial' || TEST_BOTS)) slots[1] = {kind: 'bot', name: 'CPU', color: COLORS[1]};
   subs.forEach(s => { s.mesh.visible = active(s); });
   buildCourse(); subs.forEach(resetSub); buildHUD(); layout();
   state = 'count'; countT = 3.999; setOverlay('count'); winner = null; raceT = 0;
   audio(); setTimeout(syncSnd, 80);
 }
-function toLobby(){ state = 'lobby'; slots.forEach((s, i) => { if(s && s.kind === 'bot') slots[i] = null; }); setOverlay('lobby'); syncLobby(); }
+function toLobby(){ state = 'lobby'; slots[0] = slots[1] = null; padPrevReset(); setOverlay('lobby'); syncLobby(); }
+function padPrevReset(){ Object.keys(padPrev).forEach(k => { padPrev[k] = Object.fromEntries(Object.keys(padPrev[k]).map(b => [b, true])); }); }
 function finishRace(s){
   if(winner) return; winner = s; state = 'finish';
   subs.forEach(o => { o.thr = 0; }); thrOsc.forEach(t => t.g.gain.value = 0);
@@ -482,12 +467,10 @@ function finishRace(s){
 }
 function fmt(t){ const m = Math.floor(t / 60), s = t - m * 60; return m + ':' + (s < 10 ? '0' : '') + s.toFixed(1); }
 $('#startBtn').onclick = () => { audio(); startRace(); };
-document.querySelectorAll('#modes button').forEach(b => b.onclick = () => setMode(b.dataset.m));
 $('#againBtn').onclick = () => { audio(); state = 'lobby'; startRace(); };
 $('#lobbyBtn').onclick = toLobby; $('#resumeBtn').onclick = () => { state = 'race'; setOverlay(null); }; $('#quitBtn').onclick = toLobby;
 function onKey(e){
   audio(); setTimeout(syncSnd, 80);
-  if(state === 'lobby' && e.code === 'KeyM' && humanCount() === 1) cycleMode();
   if(state === 'lobby' && e.code === 'Enter'){ if(!slots.some(s => s && s.kind === 'kb')) join('kb'); else startRace(); }
   else if(state === 'race' && e.code === 'Escape'){ state = 'pause'; setOverlay('pause'); }
   else if(state === 'pause' && e.code === 'Escape'){ state = 'race'; setOverlay(null); }
@@ -503,7 +486,7 @@ function menuPads(){
     const mine = slots.find(s => s && s.kind === 'pad' && s.gp === gp.index);
     if(mine && (state === 'race' || state === 'count')) return; // read in the game loop instead
     const ps = padState(gp.index); if(!ps) return;
-    if(state === 'lobby'){ if(ps.fire && !mine) join('pad', gp.index); else if(ps.sonar && mine && humanCount() === 1) cycleMode(); else if((ps.opt || ps.fire) && mine && (ps.opt || slots[1])) startRace(); }
+    if(state === 'lobby'){ if(ps.fire && !mine) join('pad', gp.index); else if((ps.opt || ps.fire) && mine) startRace(); }
     else if(state === 'finish'){ if(ps.fire || ps.opt){ state = 'lobby'; startRace(); } else if(ps.drop) toLobby(); }
     else if(state === 'pause'){ if(ps.fire || ps.opt){ state = 'race'; setOverlay(null); } else if(ps.drop) toLobby(); }
   });
@@ -512,7 +495,7 @@ function menuPads(){
 /* ============================== SIMULATION ============================== */
 function inputFor(s){
   const sl = slots[s.i]; if(!sl) return NONE;
-  if(sl.kind === 'bot') return botInput(s, TEST_BOTS ? 1 : SKILL[MODE] || .78);
+  if(sl.kind === 'bot') return botInput(s, 1);   // only used by the automated tests
   if(sl.kind === 'kb') return kbState();
   return padState(sl.gp) || NONE;
 }
