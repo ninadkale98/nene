@@ -44,6 +44,11 @@ canvas{display:block}
 .slot span{color:var(--muted);font-weight:700;font-size:14px}
 .slot.on{border-style:solid;border-color:var(--c);background:color-mix(in srgb,var(--c) 12%,transparent);box-shadow:0 0 30px color-mix(in srgb,var(--c) 30%,transparent)}
 .slot.on b{color:var(--c)}
+.modes{display:flex;flex-wrap:wrap;justify-content:center;gap:8px;margin:6px 0 4px}
+.modes[hidden]{display:none}
+.modes button{border:2px solid var(--line);background:rgba(255,255,255,.05);color:#fff;border-radius:999px;padding:9px 16px;font:800 15px Figtree,system-ui,sans-serif;cursor:pointer}
+.modes button.on{border-color:var(--aqua);background:rgba(95,227,255,.16);box-shadow:0 0 18px rgba(95,227,255,.35)}
+.modes small{display:block;width:100%;color:var(--muted);font-weight:700;font-size:13px}
 .ctrls{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:8px;margin-top:16px;text-align:left}
 .ctrls div{padding:9px 12px;border-radius:12px;background:rgba(255,255,255,.05);border:1px solid var(--line);font-size:13.5px;color:var(--muted);font-weight:700}
 .ctrls b{color:#fff}
@@ -77,6 +82,10 @@ canvas{display:block}
     <div class="slots">
       <div class="slot" id="slot0" style="--c:var(--p1)"><b>P1</b><span>Press ✕ on a controller to join</span></div>
       <div class="slot" id="slot1" style="--c:var(--p2)"><b>P2</b><span>Press ✕ on a second controller · or race the computer</span></div>
+    </div>
+    <div class="modes" id="modes" hidden>
+      <button data-m="trial">🏁 Solo time trial</button><button data-m="easy">🤖 vs Computer · Easy</button><button data-m="normal">🤖 Normal</button><button data-m="hard">🤖 Hard</button>
+      <small id="modeHint">△ on the controller (or M on the keyboard) switches mode · a second controller can still join with ✕</small>
     </div>
     <div class="ctrls">
       <div>🕹️ <b>Left stick</b> forward · turn</div>
@@ -420,11 +429,22 @@ function botInput(s, skill){
 
 /* ============================== GAME STATE ============================== */
 let state = 'lobby', countT = 0, raceT = 0, winner = null, pinger = 0;
+const MODES = ['trial', 'easy', 'normal', 'hard'], SKILL = {easy: .55, normal: .78, hard: .97};
+let MODE = 'normal'; try{ if(MODES.includes(localStorage.getItem('subrace_mode'))) MODE = localStorage.getItem('subrace_mode'); }catch(_){}
+const active = s => !!slots[s.i];
+const humanCount = () => slots.filter(x => x && x.kind !== 'bot').length;
+function setMode(m){ MODE = m; try{ localStorage.setItem('subrace_mode', m); }catch(_){} syncLobby(); }
+function cycleMode(){ setMode(MODES[(MODES.indexOf(MODE) + 1) % MODES.length]); }
+function getBest(){ try{ return +localStorage.getItem('subrace_best') || 0; }catch(_){ return 0; } }
+function setBest(t){ try{ localStorage.setItem('subrace_best', String(t)); }catch(_){} }
 function setOverlay(id){ ['lobby', 'count', 'pause', 'finish'].forEach(k => $('#' + k).hidden = k !== id); hud.style.display = id === 'lobby' ? 'none' : ''; }
 function syncLobby(){
   [0, 1].forEach(i => { const sl = slots[i], el = $('#slot' + i); el.classList.toggle('on', !!sl && sl.kind !== 'bot'); el.querySelector('span').textContent = sl ? (sl.kind === 'pad' ? '🎮 Controller ready ✓' : '⌨️ Keyboard ready ✓') : i === 0 ? 'Press ✕ on a controller to join' : (slots[0] ? 'Press ✕ on a second controller · or race the computer' : 'Waiting for P1'); });
-  const n = slots.filter(s => s && s.kind !== 'bot').length;
-  $('#startBtn').disabled = n === 0; $('#startBtn').textContent = n === 2 ? 'Start race ▶ (☰)' : n === 1 ? 'Race the computer ▶ (☰)' : 'Start race ▶';
+  const n = humanCount();
+  $('#modes').hidden = n !== 1;
+  document.querySelectorAll('#modes button').forEach(b => b.classList.toggle('on', b.dataset.m === MODE));
+  if(n === 1 && !slots[1]) $('#slot1').querySelector('span').textContent = MODE === 'trial' ? 'Solo time trial · no opponent' + (getBest() ? ' · best ' + fmt(getBest()) : '') : 'Computer (' + MODE + ') · or press ✕ on a second controller';
+  $('#startBtn').disabled = n === 0; $('#startBtn').textContent = n === 2 ? 'Start race ▶ (☰)' : n === 1 ? (MODE === 'trial' ? 'Start time trial ▶ (☰)' : 'Race the computer ▶ (☰)') : 'Start race ▶';
 }
 function join(kind, gp){
   const i = slots[0] ? (slots[1] ? -1 : 1) : 0; if(i < 0) return;
@@ -435,7 +455,8 @@ function join(kind, gp){
 function startRace(){
   if(state === 'race' || state === 'count') return;
   if(!slots[0]) return;
-  if(!slots[1]) slots[1] = {kind: 'bot', name: 'CPU', color: COLORS[1]};
+  if(!slots[1] && (MODE !== 'trial' || TEST_BOTS)) slots[1] = {kind: 'bot', name: 'CPU', color: COLORS[1]};
+  subs.forEach(s => { s.mesh.visible = active(s); });
   buildCourse(); subs.forEach(resetSub); buildHUD(); layout();
   state = 'count'; countT = 3.999; setOverlay('count'); winner = null; raceT = 0;
   audio(); setTimeout(syncSnd, 80);
@@ -444,20 +465,29 @@ function toLobby(){ state = 'lobby'; slots.forEach((s, i) => { if(s && s.kind ==
 function finishRace(s){
   if(winner) return; winner = s; state = 'finish';
   subs.forEach(o => { o.thr = 0; }); thrOsc.forEach(t => t.g.gain.value = 0);
-  SFX.splash(); SFX.fanfare(); hap(slots[s.i], 'win'); subs.filter(o => o !== s).forEach(o => hap(slots[o.i], 'wrong'));
+  SFX.splash(); SFX.fanfare(); hap(slots[s.i], 'win'); subs.filter(o => o !== s && active(o)).forEach(o => hap(slots[o.i], 'wrong'));
+  const solo = !slots[1];
   setTimeout(() => {
+    if(solo){
+      const best = getBest(), nb = !best || s.finishT < best; if(nb) setBest(s.finishT);
+      $('#winTitle').textContent = fmt(s.finishT); $('#winTitle').style.setProperty('--c', COLORS[0]);
+      $('#results').innerHTML = '<div style="--c:' + COLORS[0] + '"><i></i><span>Time trial <small>' + (nb ? (best ? 'New best! Beat ' + fmt(best) : 'First run, now beat it!') : 'Best is ' + fmt(best)) + '</small></span><b>' + (nb ? '🏆' : '') + '</b></div>';
+      setOverlay('finish'); return;
+    }
     const humans = slots.filter(x => x && x.kind !== 'bot').length, nm = o => slots[o].kind === 'bot' && humans ? 'Computer' : slots[o].name;
     $('#winTitle').textContent = (slots[s.i].kind === 'bot' && humans ? 'COMPUTER' : slots[s.i].name) + ' WINS'; $('#winTitle').style.setProperty('--c', COLORS[s.i]);
-    $('#results').innerHTML = subs.map(o => '<div style="--c:' + COLORS[o.i] + '"><i></i><span>' + nm(o.i) + ' <small>' + (o.done ? '' : 'reached step ' + Math.min(5, o.stage + 1) + ' of 5') + '</small></span><b>' + (o.done ? fmt(o.finishT) : '—') + '</b></div>').join('');
+    $('#results').innerHTML = subs.filter(active).map(o => '<div style="--c:' + COLORS[o.i] + '"><i></i><span>' + nm(o.i) + ' <small>' + (o.done ? '' : 'reached step ' + Math.min(5, o.stage + 1) + ' of 5') + '</small></span><b>' + (o.done ? fmt(o.finishT) : '—') + '</b></div>').join('');
     setOverlay('finish');
   }, 1600);
 }
 function fmt(t){ const m = Math.floor(t / 60), s = t - m * 60; return m + ':' + (s < 10 ? '0' : '') + s.toFixed(1); }
 $('#startBtn').onclick = () => { audio(); startRace(); };
+document.querySelectorAll('#modes button').forEach(b => b.onclick = () => setMode(b.dataset.m));
 $('#againBtn').onclick = () => { audio(); state = 'lobby'; startRace(); };
 $('#lobbyBtn').onclick = toLobby; $('#resumeBtn').onclick = () => { state = 'race'; setOverlay(null); }; $('#quitBtn').onclick = toLobby;
 function onKey(e){
   audio(); setTimeout(syncSnd, 80);
+  if(state === 'lobby' && e.code === 'KeyM' && humanCount() === 1) cycleMode();
   if(state === 'lobby' && e.code === 'Enter'){ if(!slots.some(s => s && s.kind === 'kb')) join('kb'); else startRace(); }
   else if(state === 'race' && e.code === 'Escape'){ state = 'pause'; setOverlay('pause'); }
   else if(state === 'pause' && e.code === 'Escape'){ state = 'race'; setOverlay(null); }
@@ -473,7 +503,7 @@ function menuPads(){
     const mine = slots.find(s => s && s.kind === 'pad' && s.gp === gp.index);
     if(mine && (state === 'race' || state === 'count')) return; // read in the game loop instead
     const ps = padState(gp.index); if(!ps) return;
-    if(state === 'lobby'){ if(ps.fire && !mine) join('pad', gp.index); else if((ps.opt || ps.fire) && mine && (ps.opt || slots[1])) startRace(); }
+    if(state === 'lobby'){ if(ps.fire && !mine) join('pad', gp.index); else if(ps.sonar && mine && humanCount() === 1) cycleMode(); else if((ps.opt || ps.fire) && mine && (ps.opt || slots[1])) startRace(); }
     else if(state === 'finish'){ if(ps.fire || ps.opt){ state = 'lobby'; startRace(); } else if(ps.drop) toLobby(); }
     else if(state === 'pause'){ if(ps.fire || ps.opt){ state = 'race'; setOverlay(null); } else if(ps.drop) toLobby(); }
   });
@@ -482,7 +512,7 @@ function menuPads(){
 /* ============================== SIMULATION ============================== */
 function inputFor(s){
   const sl = slots[s.i]; if(!sl) return NONE;
-  if(sl.kind === 'bot') return botInput(s, TEST_BOTS ? 1 : .82);
+  if(sl.kind === 'bot') return botInput(s, TEST_BOTS ? 1 : SKILL[MODE] || .78);
   if(sl.kind === 'kb') return kbState();
   return padState(sl.gp) || NONE;
 }
@@ -597,13 +627,13 @@ function tick(dt){
   }
   if(state === 'race'){
     raceT += dt;
-    subs.forEach(s => step(s, inputFor(s), dt));
-    collideSubs();
-    subs.forEach(s => projectiles(s, dt));
-    pinger += dt; if(pinger > 2){ pinger = 0; subs.forEach(s => { if(s.stage === 4 && !s.done){ const L = C.lanes[s.i], d = s.pos.distanceTo(L.pinger), k = clamp(1 - d / 25, .15, 1); hap(slots[s.i], 'sonar', k); if(views.includes(s)) SFX.ping(views.length > 1 ? (s.i ? .6 : -.6) : 0, k); L.led.material.color.set('#ffffff'); setTimeout(() => L.led.material.color.set('#ff2a3c'), 160); } }); }
+    subs.filter(active).forEach(s => step(s, inputFor(s), dt));
+    if(subs.every(active)) collideSubs();
+    subs.filter(active).forEach(s => projectiles(s, dt));
+    pinger += dt; if(pinger > 2){ pinger = 0; subs.filter(active).forEach(s => { if(s.stage === 4 && !s.done){ const L = C.lanes[s.i], d = s.pos.distanceTo(L.pinger), k = clamp(1 - d / 25, .15, 1); hap(slots[s.i], 'sonar', k); if(views.includes(s)) SFX.ping(views.length > 1 ? (s.i ? .6 : -.6) : 0, k); L.led.material.color.set('#ffffff'); setTimeout(() => L.led.material.color.set('#ff2a3c'), 160); } }); }
     humT += dt; if(humT > .12){ humT = 0; hum(); }
   } else if(state === 'finish'){
-    subs.forEach(s => { if(s.done) step(s, NONE, dt); });
+    subs.filter(active).forEach(s => { if(s.done) step(s, NONE, dt); });
   }
   // world animation
   sparks.forEach(sp => { sp.t += dt; sp.m.position.addScaledVector(sp.v, dt); sp.v.multiplyScalar(Math.exp(-2.5 * dt)); sp.m.material.opacity = 1 - sp.t / 1.1; });
@@ -675,14 +705,14 @@ function drawOverlay(){
     [[L.gate.x, L.gate.z], [L.x, Z.buoy], [L.board.x, L.board.z], [L.x, Z.bin]].forEach(([x, z]) => { const [a, b] = P(x, z); oc.fillRect(a - 2, b - 2, 4, 4); });
     const s = subs[i]; if(s.stage >= 4 || state === 'finish'){ const [a, b] = P(L.oct.x, L.oct.z); oc.strokeStyle = 'rgba(255,255,255,.5)'; oc.beginPath(); oc.arc(a, b, 4, 0, 6.28); oc.stroke(); }
   });
-  subs.forEach(s => { const [a, b] = P(s.pos.x, s.pos.z); oc.fillStyle = COLORS[s.i]; oc.shadowColor = COLORS[s.i]; oc.shadowBlur = 8; oc.beginPath(); oc.arc(a, b, 5, 0, 6.28); oc.fill(); oc.shadowBlur = 0; oc.strokeStyle = COLORS[s.i]; oc.lineWidth = 2; oc.beginPath(); oc.moveTo(a, b); oc.lineTo(a + Math.cos(s.yaw) * 10, b - Math.sin(s.yaw) * 10); oc.stroke(); });
+  subs.filter(active).forEach(s => { const [a, b] = P(s.pos.x, s.pos.z); oc.fillStyle = COLORS[s.i]; oc.shadowColor = COLORS[s.i]; oc.shadowBlur = 8; oc.beginPath(); oc.arc(a, b, 5, 0, 6.28); oc.fill(); oc.shadowBlur = 0; oc.strokeStyle = COLORS[s.i]; oc.lineWidth = 2; oc.beginPath(); oc.moveTo(a, b); oc.lineTo(a + Math.cos(s.yaw) * 10, b - Math.sin(s.yaw) * 10); oc.stroke(); });
 }
 let lastUi = 0;
 function updateHUD(){
   if(!C) return;
   subs.forEach(s => {
     if(!s.ui || !views.includes(s)) return;
-    s.ui.time.textContent = fmt(s.done ? s.finishT : s.time);
+    s.ui.time.textContent = fmt(s.done ? s.finishT : s.time) + (!slots[1] && getBest() ? '  ·  best ' + fmt(getBest()) : '');
     s.ui.steps.forEach((el, k) => { el.className = k < s.stage ? 'done' : k === s.stage ? 'now' : ''; if(k < s.stage) el.querySelector('i').textContent = '✓'; else el.querySelector('i').textContent = k + 1; });
     const h = instrText(s); if(s.ui.instr.dataset.h !== h){ s.ui.instr.innerHTML = h; s.ui.instr.dataset.h = h; }
     s.ui.depth.textContent = (-s.pos.y).toFixed(1) + ' m';
